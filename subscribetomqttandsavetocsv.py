@@ -7,6 +7,7 @@ import re
 import os
 import datetime
 import logging
+import keyboard
 #log file details
 log_file = "sensor_collect.log"
 logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
@@ -109,16 +110,28 @@ client.username_pw_set(mqtt_username, mqtt_password) #Set username and password
 client.connect(mqtt_broker, mqtt_port) #Connect to broker
 
 client.loop_start()
+last_save = time.time()
 try:
     while True:
-        time.sleep(300) # wait 5 minutes
-        save_to_csv() 
+        if keyboard.is_pressed('space'):
+            break
+        current_save = time.time()
+        print("last save" + str(last_save))
+        print("current save" + str(current_save))
+        if current_save - last_save > 5: 
+            last_save = current_save
+            save_to_csv()
+            print("saved")
+        time.sleep(1) # wait 5 minutes 
 except KeyboardInterrupt:
     logging.info("user exit")
+    print("exit")
 finally:
     save_to_csv()
     client.loop_stop()
     client.disconnect()
     logging.info("loop stopped")
+    print("loop stop")
+
 
 

@@ -6,7 +6,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression 
 from sklearn import metrics
-df = pd.read_csv('carton_1.csv')
+df = pd.read_csv('forstfires.csv')
 print(df.describe())
 X = df.drop(columns=['Reading ID','Time','Detector', 'Status'])
 Y = df.Status
@@ -26,5 +26,5 @@ new_data = pd.DataFrame({
 
 predicted = model.predict(new_data)
 print(predicted)
-print(metrics.classification_report(Y_test, Y_pred))
-print("confusion matrix", metrics.confusion_matrix(Y_test, Y_pred))
+#print(metrics.classification_report(Y_test, Y_pred))
+#print("confusion matrix", metrics.confusion_matrix(Y_test, Y_pred))
