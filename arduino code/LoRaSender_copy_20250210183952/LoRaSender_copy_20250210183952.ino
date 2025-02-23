@@ -183,11 +183,14 @@ void VextON(void) // powers on the oled for display
 void setup() {
   Serial.begin(115200);
   Mcu.begin();
-  // display
+  // display features disabled for power save
+  #ifdef DISPLAY
   VextON();
   m_display.init();
   m_display.clear();
   m_display.display();
+  #endif
+  
   txNumber=0;
   pinMode(iled, OUTPUT);
   digitalWrite(iled, LOW); // internal led for dust sensing off initially
