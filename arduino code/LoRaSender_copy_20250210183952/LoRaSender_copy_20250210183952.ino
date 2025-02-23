@@ -12,13 +12,13 @@
 
 /* PIN DEFINITIONS */
 #define DHTPIN 26
-#define iled 7
-#define dustAnalogOut 6
+#define iled 33
+#define dustAnalogOut 7
 
-#define GPS_RX 48
-#define GPS_TX 47
+#define GPS_RX 48 // NOT USED 
+#define GPS_TX 4
 
-#define mqAnalog 48
+#define mqAnalog 6
 
 /* radio */
 #define RF_FREQUENCY                                915000000 // Hz
