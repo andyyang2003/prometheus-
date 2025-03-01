@@ -60,7 +60,7 @@ int gasDetected = 0; // 0 if no gas, 1 if gas.
 #define LORA_IQ_INVERSION_ON                        false
 #define RX_TIMEOUT_VALUE                            1000
 #define BUFFER_SIZE                                 60 // Define the payload size here
-#define SLEEP_TIME_MINUTES 0.5
+#define SLEEP_TIME_MINUTES 0.1
 #define SLEEP_TIME_SECONDS SLEEP_TIME_MINUTES * 60
 #define SLEEP_TIME_MICROSECONDS SLEEP_TIME_SECONDS * 1000000LL
 #define TXINITNUMBER 15
@@ -83,9 +83,14 @@ HardwareSerial gpsSerial(2);
 TinyGPSPlus gps;
 double lat, lon;
 /* gps end */
+const int BUFFER_SIZE_COLLECTION = 30;
+float tempBuffer[BUFFER_SIZE_COLLECTION];
+float humBuffer[BUFFER_SIZE_COLLECTION];
+float dustBuffer[BUFFER_SIZE_COLLECTION];
+int gasBuffer[BUFFER_SIZE_COLLECTION];
+int collectionIndex = 0;
 
-
-
+volatile bool HIGH_ALERT = false;
 // Function Prototypes
 
 void setup();
@@ -101,9 +106,9 @@ void VextOn();
 void VextOff();
 void vextOff();
 void onTxDone();
+void onRxDone();
 void onTxTimeout();
-
-
+void averageData();
 
 void setup() {
   Serial.begin(115200);
@@ -129,10 +134,16 @@ void setup() {
                                   LORA_SPREADING_FACTOR, LORA_CODINGRATE,
                                   LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
                                   true, 0, 0, LORA_IQ_INVERSION_ON, 3000 ); 
+  Radio.SetRxConfig( MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
+                               LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
+                               LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
+                               0, true, 0, 0, LORA_IQ_INVERSION_ON, true );
+                            
 
   dht.begin();
   gpsSerial.begin(9600, SERIAL_8N1, 4, -1);
   pinMode(mqAnalog, INPUT);
+  Radio.Rx(0);
 }
 
 void loop()
@@ -141,48 +152,91 @@ void loop()
   readDustSensor();
   readGPS();
   gasSensor();
-// packet - temperature, humidity, dust density, gps location
-	if(lora_idle == true)
-	{
-    delay(2000); // sends every 2 seconds
-		txNumber += 1;
-    if (txNumber > 99)
-    {
-      txNumber = 0;
-    }
-    //payload: tx#, temp, hum, dust content, lat, long, gas detect
-    /* INTEGER TYPES */
-    int32_t latInt = (int32_t)(lat * 100); // Increased precision
-    int32_t lonInt = (int32_t)(lon * 100);
-    uint16_t tempInt = (uint16_t)(currentTemp * 100);
-    uint16_t humInt = (uint16_t)(currentHumidity * 100);
-    uint16_t dustInt = (uint16_t)(dustdensity * 100);
-    uint16_t txInt = (uint16_t)txNumber;
-    uint8_t gasInt = (uint8_t)gasDetected;
-    sprintf(txpacket,"%u %u %u %u %d %d %u" ,txNumber, tempInt, humInt, dustInt, latInt, lonInt, gasInt);  //start a package
-
-    #ifdef DISPLAY
-		Serial.printf("\r\nsending packet \"%s\" , length %d\r\n", txpacket, strlen(txpacket));
-    m_display.clear();
-    m_display.display();
-    m_display.drawString(0, 0, txpacket);
-    m_display.display();
-    #endif
-		Radio.Send( (uint8_t *)txpacket, strlen(txpacket) ); //send the package out	
-    lora_idle = false;
-	}
-  Radio.IrqProcess( ); // interrupt driven
-  /*
-  if (txNumber >= TXINITNUMBER)
+  Radio.Rx(0);
+  Radio.IrqProcess();
+  switch(HIGH_ALERT)
   {
-    esp_sleep_enable_timer_wakeup(SLEEP_TIME_MICROSECONDS);
-    Serial.println("Going to sleep now");
-    Serial.flush(); // Ensure serial data is sent before sleep
-    esp_deep_sleep_start();
-  }*/
-  
-}
+    case false:
+      tempBuffer[collectionIndex] = currentTemp;
+      humBuffer[collectionIndex] = currentHumidity;
+      dustBuffer[collectionIndex] = dustdensity;
+      gasBuffer[collectionIndex] = gasDetected;
+      collectionIndex++;
+      Serial.print("collection index: "); Serial.println(collectionIndex);
+      if (collectionIndex >= BUFFER_SIZE_COLLECTION)
+      {
+        averageData();
+        collectionIndex = 0;
+        sendData();
+        delay(1000);
+        while (!lora_idle)
+        {
+          Radio.IrqProcess();
+          delay(10);
+        }
+        esp_sleep_enable_timer_wakeup(SLEEP_TIME_MICROSECONDS);
+        Serial.println("Going to sleep now");
+        Serial.flush(); // Ensure serial data is sent before sleep
+        esp_deep_sleep_start(); 
+      }
+      break;
+    case true:
+      sendData();
+      break;
+  }
 
+}
+void averageData()
+{
+  float avgTemp = 0; 
+  float avgHum = 0; 
+  float avgDust = 0;
+  int avgGas = 0;
+  for (int i = 0; i < BUFFER_SIZE_COLLECTION; i++)
+  {
+    avgTemp += tempBuffer[i];
+    avgHum += humBuffer[i];
+    avgDust += dustBuffer[i];
+    avgGas += gasBuffer[i];
+  }
+  avgTemp /= BUFFER_SIZE_COLLECTION;
+  avgHum /= BUFFER_SIZE_COLLECTION;
+  avgDust /= BUFFER_SIZE_COLLECTION;
+  avgGas /= BUFFER_SIZE_COLLECTION;
+
+  currentTemp = avgTemp;
+  currentHumidity = avgHum;
+  dustDensity = avgDust;
+  gasDetected = avgGas > (BUFFER_SIZE_COLLECTION / 2);
+}
+void sendData()
+{
+  txNumber += 1;
+  if (txNumber > 99)
+  {
+    txNumber = 0;
+  }
+  //payload: tx#, temp, hum, dust content, lat, long, gas detect
+  /* INTEGER TYPES */
+  int32_t latInt = (int32_t)(lat * 100); // Increased precision
+  int32_t lonInt = (int32_t)(lon * 100);
+  uint16_t tempInt = (uint16_t)(currentTemp * 100);
+  uint16_t humInt = (uint16_t)(currentHumidity * 100);
+  uint16_t dustInt = (uint16_t)(dustdensity * 100);
+  uint16_t txInt = (uint16_t)txNumber;
+  uint8_t gasInt = (uint8_t)gasDetected;
+  sprintf(txpacket,"%u %u %u %u %d %d %u %u" ,txNumber, tempInt, humInt, dustInt, latInt, lonInt, gasInt, HIGH_ALERT);  //start a package
+
+  #ifdef DISPLAY
+  Serial.printf("\r\nsending packet \"%s\" , length %d\r\n", txpacket, strlen(txpacket));
+  m_display.clear();
+  m_display.display();
+  m_display.drawString(0, 0, txpacket);
+  m_display.display();
+  #endif
+  Radio.Send( (uint8_t *)txpacket, strlen(txpacket) );
+  lora_idle = false;
+}
 int filterData(int m) //filters data and takes average
 {
   static int flag = 0;
@@ -213,7 +267,7 @@ int filterData(int m) //filters data and takes average
   }
 }
 void gasSensor() {
-  int gassensorAnalog = analogRead(mqAnalog);sss
+  int gassensorAnalog = analogRead(mqAnalog);
   if (gassensorAnalog > GASTHRESHOLD)
   {
     gasDetected = 1;
@@ -227,8 +281,6 @@ void readDHT()
 {
   currentTemp = dht.readTemperature();
   currentHumidity = dht.readHumidity(); 
-  //dtostrf(currentHumidity, 6, 2, humidityString);
-  //dtostrf(currentTemperature, 6, 2, temperatureString);
   if (isnan(currentTemp) || isnan(currentHumidity))
   {
     #ifdef DEBUG
@@ -242,19 +294,18 @@ void readDHT()
     #endif
     return;
   }
-
 }
 void readDustSensor() { //reads dust sensor
   unsigned long currentMillis = millis(); // get time at function call
   // if time between this call and last call is greater than collection period
   if (currentMillis - previousDustMillis >= dustInterval) {
     previousDustMillis = currentMillis; // set to noq
-// collect dust
-//according to https://files.waveshare.com/upload/0/0a/Dust-Sensor-User-Manual-EN.pdf
-// 1. sensor enables iled
-// 2. controller takes 0.28 ms to start reading from analog (amount of time to reach steady state)
-// 3. 0.04ms sampling period
-// ~ 0.32ms -> 40 microseconds to be safe
+  // collect dust
+  //according to https://files.waveshare.com/upload/0/0a/Dust-Sensor-User-Manual-EN.pdf
+  // 1. sensor enables iled
+  // 2. controller takes 0.28 ms to start reading from analog (amount of time to reach steady state)
+  // 3. 0.04ms sampling period
+  // ~ 0.32ms -> 40 microseconds to be safe
     digitalWrite(iled, HIGH);
     delayMicroseconds(40); // keep tiny delay for non blocking but allows sensor
     adcvalue = analogRead(dustAnalogOut);
@@ -271,9 +322,6 @@ void readDustSensor() { //reads dust sensor
     } else {
       dustdensity = 0;
     }
-
-    //Serial.print("Dust Density: ");
-    //Serial.println(dustdensity);
   }
 }
 
@@ -300,6 +348,19 @@ void readGPS()
     bytesRead++;
     prevGPS = millis();
   }
+}
+void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
+  char receivedData[BUFFER_SIZE];
+  memcpy(receivedData, payload, size);
+  receivedData[size] = '\0'; // Null-terminate the string
+
+  if (strcmp(receivedData, "HIGH_ALERT_TRUE") == 0) {
+    HIGH_ALERT = true;
+  } else if (strcmp(receivedData, "HIGH_ALERT_FALSE") == 0) {
+    HIGH_ALERT = false;
+  }
+  Radio.Rx(0); // Restart listening
+  Serial.println(HIGH_ALERT);
 }
 void OnTxDone( void )
 {

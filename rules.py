@@ -13,7 +13,7 @@ maxAllowedTempDiff = 1 # threshold for allowable temp difference
 csv_file = "sensor_data.csv"
 def calculate_temp_change(csv_file):
     try:
-        df = pd.read_csv(csv_file)
+        df = pd.read_csv(csv_file)  
         print(df['Timestamp'])
         df['Timestamp'] = pd.to_datetime(df['Timestamp']) # ensures timestamp is in date time format to apply operations
 

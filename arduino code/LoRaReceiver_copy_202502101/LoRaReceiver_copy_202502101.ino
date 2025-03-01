@@ -60,7 +60,14 @@ char receivedLoRaData[BUFFER_SIZE];
 void setupMQTT() {
   mqttClient.setServer(mqtt_broker, mqtt_port);
 }
-
+void sendHighAlert(bool alertState)
+{
+  if (alertState) {
+    Radio.Send((uint8_t *)"HIGH_ALERT_TRUE", strlen("HIGH_ALERT_TRUE"));
+  } else {
+    Radio.Send((uint8_t *)"HIGH_ALERT_FALSE", strlen("HIGH_ALERT_FALSE"));
+  }
+}
 void reconnect() {
   Serial.println("Connecting to MQTT Broker...");
   while (!mqttClient.connected()) {
@@ -111,6 +118,11 @@ void setup() {
                                LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
                                LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
                                0, true, 0, 0, LORA_IQ_INVERSION_ON, true );
+    Radio.SetTxConfig( MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
+                                LORA_SPREADING_FACTOR, LORA_CODINGRATE,
+                                LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
+                                true, 0, 0, LORA_IQ_INVERSION_ON, 3000 );  
+    Radio.Rx(0);                          
 }
 
 
@@ -133,11 +145,13 @@ void loop()
   // if not receiving/doing anything, go into doing stuff
   if(lora_idle)
   {
+    sendHighAlert(true);
     lora_idle = false;
     Serial.println("into RX mode");
     mqttClient.publish(topic_publish, receivedLoRaData); //publish
-    Radio.Rx(0); // open to reading
+
   }
+  Radio.Rx(0);
   Radio.IrqProcess( );
 }
   
@@ -156,4 +170,5 @@ void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
     m_display.display();
     strcpy(receivedLoRaData, rxpacket);
     lora_idle = true;
+    Radio.Rx(0); // open to reading
 }
