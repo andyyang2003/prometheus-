@@ -6,6 +6,7 @@
 #include "DHT.h"
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
+#include <FreeRTOS.h>
 //#include "esp_rtc_mem.h"
 
 #define DISPLAY

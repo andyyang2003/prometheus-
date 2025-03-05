@@ -7,6 +7,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+
+#include <sstream>
 /* display */
 SSD1306Wire  m_display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED); // addr , freq , i2c group , resolution , rst
 /* display end */
@@ -28,8 +30,20 @@ SSD1306Wire  m_display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OL
 #define SLEEP_TIME_SECONDS SLEEP_TIME_MINUTES * 60
 #define SLEEP_TIME_MICROSECONDS SLEEP_TIME_SECONDS * 1000000LL
 #define TXINITNUMBER 15
+#define HISTORY_SIZE 3
+#define PACKET_LENGTH 8
+#define TEMP_THRESHOLD 10
+#define HUM_THRESHOLD 10
+#define DUST_THRESHOLD 200
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
+int historyIndex;
+int packetNumbers[HISTORY_SIZE] = {0};
+int tempBuffer[HISTORY_SIZE] = {0};
+int humBuffer[HISTORY_SIZE] = {0};
+int dustBuffer[HISTORY_SIZE] = {0};
+int fire_detected = 0; // Fire detection based on if temp_diff > temp_thresh, hum_diff < hum_thresh, dust_diff > dust_thresh
+
 static RadioEvents_t RadioEvents;
 int16_t txNumber;
 int16_t rssi,rxSize;
@@ -56,13 +70,60 @@ long previous_time = 0;
 
 volatile bool newLoraData = false;
 char receivedLoRaData[BUFFER_SIZE];
+void calcDifferences(char* packet)
+{
+  // Parse incoming packet into an integer array
+  int values[PACKET_LENGTH] = {0};
+  int index = 0;
+  char packetCopy[60];  // Make a copy of packet (since strtok modifies the string)
+  strcpy(packetCopy, packet);
+
+  char* token = strtok(packetCopy, " ");
+  while (token != NULL && index < PACKET_LENGTH) {
+      values[index] = atoi(token);
+      token = strtok(NULL, " ");
+      index++;
+  }
+
+  // Store the new packet in history
+  int prevIndex = historyIndex;  // Previous packet index
+  historyIndex = (historyIndex + 1) % HISTORY_SIZE; // Circular buffer update
+  
+  packetNumbers[historyIndex] = values[0];  // Packet #
+  tempBuffer[historyIndex] = values[1];     // Temperature
+  humBuffer[historyIndex] = values[2];      // Humidity
+  dustBuffer[historyIndex] = values[3];     // Dust level
+  // If at least two packets exist, compute and print differences
+  if (packetNumbers[0] != 0 && packetNumbers[HISTORY_SIZE - 1] != 0) 
+  {
+    int tempDiff = tempBuffer[HISTORY_SIZE - 1] - tempBuffer[0];
+    int humDiff = humBuffer[HISTORY_SIZE - 1] - humBuffer[0];
+    int dustDiff = dustBuffer[HISTORY_SIZE - 1] - dustBuffer[0];
+
+    Serial.print("Differences (Packet 10 - Packet 0): ");
+    Serial.printf("Temp: %d - %d: ", tempBuffer[HISTORY_SIZE - 1],tempBuffer[0]); Serial.print(tempDiff);
+    Serial.print(" Hum: "); Serial.print(humDiff);
+    Serial.print(" Dust: "); Serial.print(dustDiff);
+    Serial.println();
+
+    // Check if differences exceed thresholds
+    if (abs(tempDiff) > TEMP_THRESHOLD && abs(humDiff) < HUM_THRESHOLD && abs(dustDiff) > DUST_THRESHOLD) {
+      fire_detected = 1;
+      sendHighAlert()
+    }
+    else
+    {
+      fire_detected = 0;
+    }
+  }
+}
 
 void setupMQTT() {
   mqttClient.setServer(mqtt_broker, mqtt_port);
 }
 void sendHighAlert(bool alertState)
 {
-  if (alertState) {
+  if (alertState) { 
     Radio.Send((uint8_t *)"HIGH_ALERT_TRUE", strlen("HIGH_ALERT_TRUE"));
   } else {
     Radio.Send((uint8_t *)"HIGH_ALERT_FALSE", strlen("HIGH_ALERT_FALSE"));
@@ -125,11 +186,8 @@ void setup() {
     Radio.Rx(0);                          
 }
 
-
-
 void loop()
 {
-
   if (WiFi.status() != WL_CONNECTED) {
       delay(500);
       Serial.println("wifi not connected");
@@ -149,7 +207,6 @@ void loop()
     lora_idle = false;
     Serial.println("into RX mode");
     mqttClient.publish(topic_publish, receivedLoRaData); //publish
-
   }
   Radio.Rx(0);
   Radio.IrqProcess( );
@@ -158,17 +215,24 @@ void loop()
 
 void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
-    rssi=rssi;
-    rxSize=size;
-    memcpy(rxpacket, payload, size );
-    rxpacket[size]='\0';
-    Radio.Sleep( );
-    Serial.printf("\r\nreceived packet \"%s\" with rssi %d , length %d\r\n",rxpacket,rssi,rxSize);
-    m_display.clear();
-    m_display.display();
-    m_display.drawString(0, 0, rxpacket);
-    m_display.display();
-    strcpy(receivedLoRaData, rxpacket);
-    lora_idle = true;
-    Radio.Rx(0); // open to reading
+  rssi=rssi;
+  rxSize=size;
+  memcpy(rxpacket, payload, size );
+  rxpacket[size]='\0';
+
+  Radio.Sleep( );
+  Serial.printf("\r\nreceived packet \"%s\" with rssi %d , length %d\r\n", rxpacket, rssi, rxSize);
+  m_display.clear();
+  m_display.display();
+  m_display.drawString(0, 0, rxpacket);
+  m_display.display();
+  strcpy(receivedLoRaData, rxpacket);
+
+  char fire_detect_string[2];
+  itoa(fire_detected, fire_detect_string, 10);
+  strncat(receivedLoRaData, fire_detect_string, sizeof(fire_detect_string) - 1);
+  calcDifferences(rxpacket);
+
+  lora_idle = true;
+  Radio.Rx(0); // open to reading
 }
