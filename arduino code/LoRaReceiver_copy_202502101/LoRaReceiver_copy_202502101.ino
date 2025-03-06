@@ -26,15 +26,15 @@ SSD1306Wire  m_display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OL
 #define LORA_IQ_INVERSION_ON                        false
 #define RX_TIMEOUT_VALUE                            1000
 #define BUFFER_SIZE                                 60 // Define the payload size here
-#define SLEEP_TIME_MINUTES 0.5
+#define SLEEP_TIME_MINUTES 5
 #define SLEEP_TIME_SECONDS SLEEP_TIME_MINUTES * 60
 #define SLEEP_TIME_MICROSECONDS SLEEP_TIME_SECONDS * 1000000LL
 #define TXINITNUMBER 15
 #define HISTORY_SIZE 3
 #define PACKET_LENGTH 8
-#define TEMP_THRESHOLD 10
-#define HUM_THRESHOLD 10
-#define DUST_THRESHOLD 200
+#define TEMP_THRESHOLD 500
+#define HUM_THRESHOLD 200
+#define DUST_THRESHOLD 400
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 int historyIndex;
@@ -42,7 +42,8 @@ int packetNumbers[HISTORY_SIZE] = {0};
 int tempBuffer[HISTORY_SIZE] = {0};
 int humBuffer[HISTORY_SIZE] = {0};
 int dustBuffer[HISTORY_SIZE] = {0};
-int fire_detected = 0; // Fire detection based on if temp_diff > temp_thresh, hum_diff < hum_thresh, dust_diff > dust_thresh
+int gasDetectedBuffer[HISTORY_SIZE] = {0};
+int fire_probability = 0; // Fire detection based on if temp_diff > temp_thresh, hum_diff < hum_thresh, dust_diff > dust_thresh
 
 static RadioEvents_t RadioEvents;
 int16_t txNumber;
@@ -93,6 +94,7 @@ void calcDifferences(char* packet)
   tempBuffer[historyIndex] = values[1];     // Temperature
   humBuffer[historyIndex] = values[2];      // Humidity
   dustBuffer[historyIndex] = values[3];     // Dust level
+  gasDetectedBuffer[historyIndex] = values[4];
   // If at least two packets exist, compute and print differences
   if (packetNumbers[0] != 0 && packetNumbers[HISTORY_SIZE - 1] != 0) 
   {
@@ -105,19 +107,50 @@ void calcDifferences(char* packet)
     Serial.print(" Hum: "); Serial.print(humDiff);
     Serial.print(" Dust: "); Serial.print(dustDiff);
     Serial.println();
+    bool tempHigh_1 = abs(tempDiff) > 500;
+    bool tempHigh_2 = abs(tempDiff) > 1000;
+    bool tempHigh_3 = abs(tempDiff) > 2000;
 
+    bool humLow = abs(humDiff) < HUM_THRESHOLD;
+    bool dustHigh = abs(dustDiff) > DUST_THRESHOLD;
     // Check if differences exceed thresholds
-    if (abs(tempDiff) > TEMP_THRESHOLD && abs(humDiff) < HUM_THRESHOLD && abs(dustDiff) > DUST_THRESHOLD) {
-      fire_detected = 1;
-      sendHighAlert()
+    if (tempHigh_1) {
+      fire_probability += 5;
     }
-    else
+    else if (tempHigh_2)
     {
-      fire_detected = 0;
+      fire_probability += 30;
+    }
+    else if (tempHigh_3)
+    {
+      fire_probability += 50;
+    }
+    if (dustHigh) {
+      fire_probability += 2;
+    }
+    if (humLow) {
+      fire_probability += 2;
+    }
+    if (tempHigh_1 && humLow) {
+      fire_probability += 10;  // Extra boost for temp & humidity combined
+    }
+    if (dustHigh && humLow) {
+      fire_probability += 4;  // Another boost
+    }
+    if (tempHigh_1 && dustHigh && humLow) {
+      fire_probability += 20;  // Max alert
+    }
+    if (fire_probability >= 100)
+    {
+      sendHighAlert(true);
+      fire_probability = 100;
+    }
+    if (!tempHigh_1 || !tempHigh_2 || !tempHigh_3 || !humLow || !dustHigh)
+    {
+      fire_probability = max(fire_probability - 20, 0);
     }
   }
 }
-
 void setupMQTT() {
   mqttClient.setServer(mqtt_broker, mqtt_port);
 }
@@ -228,9 +261,9 @@ void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
   m_display.display();
   strcpy(receivedLoRaData, rxpacket);
 
-  char fire_detect_string[2];
-  itoa(fire_detected, fire_detect_string, 10);
-  strncat(receivedLoRaData, fire_detect_string, sizeof(fire_detect_string) - 1);
+  char fire_probability_string[3];
+  itoa(fire_probability, fire_probability_string, 10);
+  strncat(receivedLoRaData, fire_probability_string, sizeof(fire_probability_string) - 1);
   calcDifferences(rxpacket);
 
   lora_idle = true;

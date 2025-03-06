@@ -6,6 +6,7 @@
 #include "DHT.h"
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
+#include "FreeRTOS.h"
 //#include "esp_rtc_mem.h"
 
 #define DISPLAY
@@ -33,7 +34,7 @@ DHT dht(DHTPIN, DHT22);
 /* dust sensors */
 #define COV_RATIO 0.2
 #define NO_DUST_VOLTAGE 400 //baseline threshold
-#define SYS_VOLTAGE 3300 // 3.3V for esp32
+#define SYS_VOLTAGE 5000 // 3.3V for esp32
 #define GASTHRESHOLD 1500
 float dustdensity, dustvoltage;
 int adcvalue;
@@ -160,7 +161,7 @@ void loop()
       Serial.printf("ALERT STATE: %s ", HIGH_ALERT ? "true" : "false");
       tempBuffer[collectionIndex] = currentTemp;
       humBuffer[collectionIndex] = currentHumidity;
-      dustBuffer[collectionIndex] = dustdensity;
+      dustBuffer[collectionIndex] = dustdensity;  
       gasBuffer[collectionIndex] = gasDetected;
       collectionIndex++;
       //Serial.print("collection index: "); Serial.println(collectionIndex);
@@ -233,7 +234,7 @@ void sendData()
   uint16_t dustInt = (uint16_t)(dustdensity * 100);
   uint16_t txInt = (uint16_t)txNumber;
   uint8_t gasInt = (uint8_t)gasDetected;
-  sprintf(txpacket,"%u %u %u %u %d %d %u " ,txNumber, tempInt, humInt, dustInt, latInt, lonInt, gasInt);  //start a package
+  sprintf(txpacket,"%u %u %u %u %d %d %u " ,txNumber, tempInt, humInt, dustInt, gasInt, latInt, lonInt);  //start a package
 
   #ifdef DISPLAY
   Serial.printf("\r\nsending packet \"%s\" , length %d\r\n", txpacket, strlen(txpacket));
@@ -330,6 +331,7 @@ void readDustSensor() { //reads dust sensor
     } else {
       dustdensity = 0;
     }
+
   }
 }
 
